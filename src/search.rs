@@ -1,7 +1,6 @@
 // Copyright (c) 2015 Markus Kohlhase <mail@markus-kohlhase.de>
 
 use geo;
-
 use json::{Entry, Category};
 use geo::Coordinate;
 use std::cmp::min;
@@ -81,6 +80,7 @@ pub fn find_duplicates(entries: &Vec<Entry>) -> Vec<(&Entry, &Entry, &str)> {
     }
   }
 
+  // print the duplicates + reason:
   for dup in &duplicates {
     info!("{} - {} ({})", dup.0.title, dup.1.title, dup.2);
   }
@@ -88,21 +88,18 @@ pub fn find_duplicates(entries: &Vec<Entry>) -> Vec<(&Entry, &Entry, &str)> {
   duplicates
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum DuplicateType {
     SimilarChars,
     SimilarWords
 }
-// returns 0 if e1 and e2 are not similar_titl
-// returns 1 if the hamming distance of their titles is small
-// returns 2 if at most one word of their titles is different (and they don't both have one-word titles)
-// returns 3 if they are located within 10 meters of each other
-fn is_duplicate(e1 : &Entry, e2: &Entry) -> Option<DuplicateType>{
-  //println!("\ncomparing '{}' and '{}':", e1.title, e2.title);
 
-  if similar_title(&e1, &e2, 0.1, 0) && in_close_proximity(&e1, &e2, 100) {Some(DuplicateType::SimilarChars)} 
-  else if similar_title(&e1, &e2, 0.0, 1) && in_close_proximity(&e1, &e2, 100) {Some(DuplicateType::SimilarWords)}
-  else {None}  // entries are not similar 
+
+// 
+fn is_duplicate(e1 : &Entry, e2: &Entry) -> Option<DuplicateType>{
+  if similar_title(&e1, &e2, 0.3, 0) && in_close_proximity(&e1, &e2, 100) {Some(DuplicateType::SimilarChars)} 
+  else if similar_title(&e1, &e2, 0.0, 2) && in_close_proximity(&e1, &e2, 100) {Some(DuplicateType::SimilarWords)}
+  else {None}     // entries are not similar 
 }
 
 
@@ -110,10 +107,8 @@ fn is_duplicate(e1 : &Entry, e2: &Entry) -> Option<DuplicateType>{
 fn in_close_proximity(e1: &Entry, e2: &Entry, maxDistMeters:u32) -> bool{
     let dist = entry_distance_in_meters(&e1, &e2) as f32;
     if dist <= maxDistMeters as f32{
-      println!("lat1: {}, lat2: {}, lng1: {}, lng2: {} --> distance: {} m (near)", e1.lat, e2.lat, e1.lng, e2.lng, dist);
       true
     } else {
-      //println!("distance: {} --> far", dist);
       false
     }
 }
@@ -128,19 +123,14 @@ fn entry_distance_in_meters(e1: &Entry, e2: &Entry) -> f64{
 
 fn similar_title(e1: &Entry, e2: &Entry, maxPercentDifferent: f32, maxWordsDifferent: u32) -> bool{
   let maxDist : usize = ((min(e1.title.len(),e2.title.len()) as f32 * maxPercentDifferent) + 1.0) as usize;  // +1 is to get the ceil
-  if hamming_distance_small(&e1.title, &e2.title, maxDist) | (words_equal_except_k_words(&e1.title, &e2.title, maxWordsDifferent)) {
-    //println!("--> titles similar");
-    true 
-  } else {
-    //println!("--> titles not similar");
-    false
-  }
+  
+  levenshtein_distance_small(&e1.title, &e2.title, maxDist) | (words_equal_except_k_words(&e1.title, &e2.title, maxWordsDifferent))
 }
 
 
 
 
-// returns true if all but k words are equal in str1 and str2 
+// returns true if all but k words are equal in str1 and str2 (and one of them has more than one word)
 // (words in str1 and str2 are treated as sets, order & multiplicity of words doesn't matter)
 fn words_equal_except_k_words(str1: &str, str2:&str, k:u32) -> bool{
   let mut s1 : &str;
@@ -179,7 +169,6 @@ fn words_equal_except_k_words(str1: &str, str2:&str, k:u32) -> bool{
       
       
       // return:
-      //println!("words different: {}/{} --> {}", diff, k, if diff <= k {"similar"} else {"not similar"});
       diff <= k
   }
 }
@@ -191,7 +180,6 @@ fn words_equal_except_k_words(str1: &str, str2:&str, k:u32) -> bool{
 // (doesn't need to calculate the full hamming distance because it aborts as soon as maxDist is reached)
 fn hamming_distance_small(str1: &str, str2:&str, maxDist:usize) -> bool{
   let mut dist = 0;
-  //println!("comparing:\n{}\n{}", str1, str2);
   for i in 0..str1.chars().count() {
     if str1.chars().nth(i) != str2.chars().nth(i) {
       dist = dist + 1;
@@ -201,42 +189,32 @@ fn hamming_distance_small(str1: &str, str2:&str, maxDist:usize) -> bool{
     }
   }
 
-  if dist > maxDist{
-    //println!("hamming distance larger than {} --> not similar", maxDist);
-    false
-  } else{
-    //println!("hamming distance {}/{} --> similar", dist, maxDist);
-    true
-  }
+  dist <= maxDist
 }
 
 
 // Levenshtein Distance more realistically captures typos (all of the following operations are counted as distance 1: add one character in between, delete one character, change one character)
 // but it proved to be way too slow to be run on the whole dataset
-fn levenshtein_distance(s: &str, t:&str) -> usize{
-  levenshtein_distance2(s, s.len(), t, t.len())
+fn levenshtein_distance_small(s: &str, t:&str, maxDist: usize) -> bool{
+  levenshtein_distance(s, s.len(), t, t.len()) <= maxDist
 }
 
 // https://en.wikipedia.org/wiki/Levenshtein_distance#Computing_Levenshtein_distance
-fn levenshtein_distance2(s: &str, len_s : usize, t: &str, len_t: usize) -> usize {
+fn levenshtein_distance(s: &str, len_s : usize, t: &str, len_t: usize) -> usize {
   let cost : usize;
-  //println!("{} - {}",s, len_s);
-  //println!("{} - {}",t, len_t);
 
   // base case: empty strings
   if len_s == 0 {
-      //println!("s is empty");
       len_t
   } else {
     if len_t == 0 {
-        //println!("t is empty");
         len_s
       } else {
 
       // test if last characters of the strings match 
       if s.chars().nth(len_s-1) == t.chars().nth(len_t-1) {cost = 0;} else {cost = 1;}
       // return minimum of delete char from s, delete char from t, and delete char from both
-      min3(levenshtein_distance2(s, len_s - 1, t, len_t) + 1, levenshtein_distance2(s, len_s, t, len_t - 1) + 1, levenshtein_distance2(s, len_s - 1, t, len_t - 1) + cost)
+      min3(levenshtein_distance(s, len_s - 1, t, len_t) + 1, levenshtein_distance(s, len_s, t, len_t - 1) + 1, levenshtein_distance(s, len_s - 1, t, len_t - 1) + cost)
      }
   }
 }
@@ -248,4 +226,106 @@ fn min3(s:usize, t:usize, u:usize) -> usize{
   } else{
     min(t,u)
   }
+}
+
+
+// TESTS:
+impl Entry {
+  fn new(title: String, description: String, lat: f64, lng:f64) -> Entry{
+    Entry {
+      id          : None,
+      created     : None,
+      version     : None,
+      title       : title,
+      description : description,
+      lat         : lat,
+      lng         : lng,
+      street      : None,
+      zip         : None,
+      city        : None,
+      country     : None,
+      email       : None,
+      telephone   : None,
+      homepage    : None,
+      categories  : None,
+      license     : None
+    }
+  }
+}
+
+#[test]
+fn test_hamming_distance_small(){
+  assert_eq!(true, hamming_distance_small("aaaaa", "aabab", 2));
+  assert_eq!(false, hamming_distance_small("aaaaa", "abbba", 2));
+  assert_eq!(true, hamming_distance_small("aaaaaa", "abaaa", 2));
+  assert_eq!(false, hamming_distance_small("aaaaaa", "abaa", 2));
+  assert_eq!(false, hamming_distance_small("Hallo! Ein Eintrag", "Hallo! Tschüss", 4));
+}
+
+
+#[test]
+fn test_in_close_proximity(){
+  let e1 = Entry::new("Entry 1".to_string(), "Hier sitze ich.".to_string(), 49.23153745093964, 7.003816366195679);
+  let e2 = Entry::new("Entry 2".to_string(), "Die andere Straßenseite.".to_string(), 49.23167056421013, 7.003558874130248);
+
+  assert_eq!(in_close_proximity(&e1, &e2, 30), true);
+  assert_eq!(in_close_proximity(&e1, &e2, 10), false);
+}
+
+
+#[test]
+fn test_similar_title(){
+  let e1 = Entry::new("0123456789".to_string(), "Hallo! Ein Eintrag".to_string(), 49.23153745093964, 7.003816366195679);
+  let e2 = Entry::new("01234567".to_string(), "allo! Ein Eintra".to_string(), 49.23153745093964, 7.003816366195679);
+  let e3 = Entry::new("eins zwei drei".to_string(), "allo! Ein Eintra".to_string(), 49.23153745093964, 7.003816366195679);
+  let e4 = Entry::new("eins zwei fünf sechs".to_string(), "allo! Ein Eintra".to_string(), 49.23153745093964, 7.003816366195679);
+
+  assert_eq!(true, similar_title(&e1, &e2, 0.2, 0));  // only 2 characters changed
+  assert_eq!(false, similar_title(&e1, &e2, 0.1, 0)); // more than one character changed
+  assert_eq!(true, similar_title(&e3, &e4, 0.0, 2));  // only 2 words changed
+  assert_eq!(false, similar_title(&e3, &e4, 0.0, 1)); // more than 1 word changed
+}
+
+
+#[test]
+fn test_is_duplicate(){
+  let e1 = Entry::new("Ein Eintrag Blablabla".to_string(), "Hallo! Ein Eintrag".to_string(), 49.23153745093964, 7.003816366195679);
+  let e2 = Entry::new("Eintrag".to_string(), "Hallo! Ein Eintrag".to_string(), 49.23153745093970, 7.003816366195679);
+  let e3 = Entry::new("En Eintrg Blablala".to_string(), "Hallo! Ein Eintrag".to_string(), 49.23153745093955, 7.003816366195679);
+  let e4 = Entry::new("Ein Eintrag Blabla".to_string(), "Hallo! Ein Eintrag".to_string(), 40.23153745093960, 7.003816366195670);
+
+  assert_eq!(Some(DuplicateType::SimilarWords), is_duplicate(&e1, &e2));  // titles have a word that is equal
+  assert_eq!(Some(DuplicateType::SimilarChars), is_duplicate(&e1, &e3));  // titles similar (works with levenshtein distance but not hamming distance)
+  assert_eq!(None, is_duplicate(&e2, &e3));     // titles not similar
+  assert_eq!(None, is_duplicate(&e3, &e4));     // entries not located close together
+}
+
+
+#[test]
+fn test_find_duplicates(){
+  assert!(true);
+}
+
+
+#[test]
+fn test_levenshtein_distance(){
+  assert_eq!(5, levenshtein_distance("hello", 5, "",0));
+  assert_eq!(3, levenshtein_distance("", 0, "abc", 3));
+  assert_eq!(1, levenshtein_distance("hello", 5, "heello", 6));
+}
+
+#[test]
+fn test_min(){
+  assert_eq!(1, min3(1,2,3));
+  assert_eq!(2, min3(3,2,3));
+  assert_eq!(2, min3(3,3,2));
+  assert_eq!(1, min3(1,1,1));
+}
+
+#[test]
+fn test_words_equal(){
+  assert_eq!(true, words_equal_except_k_words("ab abc a", "ab abc b", 1));
+  assert_eq!(true, words_equal_except_k_words("ab abc a", "abc ab", 1));
+  assert_eq!(true, words_equal_except_k_words("ab ac a", "abc ab ab", 2));
+  assert_eq!(false, words_equal_except_k_words("a a a", "ab abc", 2));
 }
