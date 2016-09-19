@@ -175,8 +175,6 @@ fn main() {
         }
       }
 
-
-
     get "/duplicates/" => |req, mut res|{
       let data: &Data = res.server_data();
       match data.db_pool()
@@ -184,10 +182,8 @@ fn main() {
 
           Entry::all(pool).map_err(AppError::Store)
             .and_then(|entries|{
-              let duplicates : Vec<(&Entry, &Entry, &str)> = search::find_duplicates(&entries);  // vec!();
-              encode(&duplicates).map_err(AppError::Encode)
-            }
-            )
+              encode(&search::find_duplicates(&entries)).map_err(AppError::Encode)
+            })
         })
       {
           Ok(r) => {
@@ -199,10 +195,6 @@ fn main() {
           }
       }
     }
-
-
-
-
 
     post "/entries/:id" => |req, res|{
       match req.json_as::<Entry>().map_err(AppError::Io)
