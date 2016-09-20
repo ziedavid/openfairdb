@@ -175,7 +175,7 @@ fn main() {
         }
       }
 
-    get "/duplicates/" => |req, mut res|{
+    get "/duplicates/" => |_, mut res|{
       let data: &Data = res.server_data();
       match data.db_pool()
         .and_then(|ref pool|{

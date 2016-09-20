@@ -57,23 +57,20 @@ fn category_filter_factory<'a>(e: &'a Category) -> Box<Fn(&str) -> bool + 'a> {
     })
 }
 
-
-
-
-// FIND DUPLICATES:
-
 // return vector of entries like: (entry1ID, entry2ID, reason) where entry1 and entry2 are similar entries
-pub fn find_duplicates(entries: &Vec<Entry>) -> Vec<(&Option<String>, &Option<String>, Option<DuplicateType>)> {
+pub fn find_duplicates(entries: &Vec<Entry>) -> Vec<(&String, &String, DuplicateType)> {
   let mut duplicates = Vec::new();
   for i in 0..entries.len() {
     for j in (i+1)..entries.len() {
-      let duplicate_type = is_duplicate(&entries[i], &entries[j]);
-      if duplicate_type.is_some() {
-        duplicates.push((&entries[i].id, &entries[j].id, duplicate_type));
+      if let Some(t) = is_duplicate(&entries[i], &entries[j]) {
+        if let Some(ref id1) = entries[i].id {
+          if let Some(ref id2) = entries[j].id {
+            duplicates.push((id1, id2, t));
+          }
+        }
       }
     }
   }
-
   duplicates
 }
 
@@ -85,77 +82,74 @@ pub enum DuplicateType {
 
 // returns a DuplicateType if the two entries have a similar title, returns None otherwise
 fn is_duplicate(e1 : &Entry, e2: &Entry) -> Option<DuplicateType>{
-  if similar_title(&e1, &e2, 0.3, 0) && in_close_proximity(&e1, &e2, 100) {Some(DuplicateType::SimilarChars)} 
-  else if similar_title(&e1, &e2, 0.0, 2) && in_close_proximity(&e1, &e2, 100) {Some(DuplicateType::SimilarWords)}
-  else {None}     // entries are not similar 
+  if similar_title(&e1, &e2, 0.3, 0) && in_close_proximity(&e1, &e2, 100.0) {
+    Some(DuplicateType::SimilarChars)
+  } else if similar_title(&e1, &e2, 0.0, 2) && in_close_proximity(&e1, &e2, 100.0) {
+    Some(DuplicateType::SimilarWords)
+  } else {
+    None
+  }
 }
 
-fn in_close_proximity(e1: &Entry, e2: &Entry, max_dist_meters:u32) -> bool{
-    let dist = entry_distance_in_meters(&e1, &e2) as f32;
-    if dist <= max_dist_meters as f32{
-      true
-    } else {
-      false
-    }
+fn in_close_proximity(e1: &Entry, e2: &Entry, max_dist_meters:f64) -> bool {
+    entry_distance_in_meters(&e1, &e2) <= max_dist_meters
 }
 
-fn entry_distance_in_meters(e1: &Entry, e2: &Entry) -> f64{
+fn entry_distance_in_meters(e1: &Entry, e2: &Entry) -> f64 {
   let coord1 = Coordinate{lat: e1.lat, lng:e1.lng};
   let coord2 = Coordinate{lat: e2.lat, lng:e2.lng};
   geo::distance(&coord1, &coord2) * 1000.0
 }
 
-fn similar_title(e1: &Entry, e2: &Entry, max_percent_different: f32, max_words_different: u32) -> bool{
+fn similar_title(e1: &Entry, e2: &Entry, max_percent_different: f32, max_words_different: u32) -> bool {
   let max_dist : usize = ((min(e1.title.len(),e2.title.len()) as f32 * max_percent_different) + 1.0) as usize;  // +1 is to get the ceil
-  
-  hamming_distance_small(&e1.title, &e2.title, max_dist) || (words_equal_except_k_words(&e1.title, &e2.title, max_words_different))
+
+  hamming_distance_small(&e1.title, &e2.title, max_dist)
+  || words_equal_except_k_words(&e1.title, &e2.title, max_words_different)
 }
 
 // returns true if all but k words are equal in str1 and str2 (and one of them has more than one word)
 // (words in str1 and str2 are treated as sets, order & multiplicity of words doesn't matter)
-fn words_equal_except_k_words(str1: &str, str2:&str, k:u32) -> bool{
-  let mut s1 : &str;
-  let mut s2 : &str;
+fn words_equal_except_k_words(str1: &str, str2:&str, k:u32) -> bool {
 
   let len1 =  str1.split_whitespace().count();
   let len2 =  str2.split_whitespace().count();
 
   if (len1 == 1) & (len2 == 1) {
-    false
-  } else{
-
-      if len1 <= len2 {
-        s1 = str1;
-        s2 = str2;
-      } else{
-        s1 = str2;
-        s2 = str1;
-      }
-
-      let mut words1 = s1.split_whitespace();
-      let mut words2 = s2.split_whitespace();
-
-      let mut diff = 0;
-      let mut set1 = HashSet::new();
-      for w in words1 {
-        set1.insert(w);
-      }
-
-      let mut words2 = s2.split(" ");
-      for w in words2 {
-        if !set1.contains(w) {
-          diff = diff + 1;
-        }
-      }
-      
-      
-      // return:
-      diff <= k
+    return false;
   }
+
+  let s1 : &str;
+  let s2 : &str;
+
+  if len1 <= len2 {
+    s1 = str1;
+    s2 = str2;
+  } else{
+    s1 = str2;
+    s2 = str1;
+  }
+
+  let words = s1.split_whitespace();
+
+  let mut diff = 0;
+  let mut set = HashSet::new();
+
+  for w in words {
+    set.insert(w);
+  }
+
+  for w in s2.split(" ") {
+    if !set.contains(w) {
+      diff = diff + 1;
+    }
+  }
+  diff <= k
 }
 
-// returns true if the hamming distance between str1 and str2 is smaller or equal as maxDist
-// (doesn't need to calculate the full hamming distance because it aborts as soon as maxDist is reached)
+// returns true if the hamming distance between str1 and str2 is smaller or
+// equal as maxDist (doesn't need to calculate the full hamming distance because
+// it aborts as soon as maxDist is reached)
 fn hamming_distance_small(str1: &str, str2:&str, max_dist:usize) -> bool{
   let mut dist = 0;
   for i in 0..str1.chars().count() {
@@ -166,11 +160,12 @@ fn hamming_distance_small(str1: &str, str2:&str, max_dist:usize) -> bool{
       }
     }
   }
-
   dist <= max_dist
 }
 
-// Levenshtein Distance more realistically captures typos (all of the following operations are counted as distance 1: add one character in between, delete one character, change one character)
+// Levenshtein Distance more realistically captures typos (all of the following
+// operations are counted as distance 1: add one character in between, delete
+// one character, change one character)
 // but it proved to be way too slow to be run on the whole dataset
 fn levenshtein_distance_small(s: &str, t:&str, max_dist: usize) -> bool{
   levenshtein_distance(s, s.len(), t, t.len()) <= max_dist
@@ -178,32 +173,38 @@ fn levenshtein_distance_small(s: &str, t:&str, max_dist: usize) -> bool{
 
 // https://en.wikipedia.org/wiki/Levenshtein_distance#Computing_Levenshtein_distance
 fn levenshtein_distance(s: &str, len_s : usize, t: &str, len_t: usize) -> usize {
-  let cost : usize;
 
   // base case: empty strings
   if len_s == 0 {
-      len_t
-  } else {
-    if len_t == 0 {
-        len_s
-      } else {
-
-      // test if last characters of the strings match 
-      if s.chars().nth(len_s-1) == t.chars().nth(len_t-1) {cost = 0;} else {cost = 1;}
-      // return minimum of delete char from s, delete char from t, and delete char from both
-      min3(levenshtein_distance(s, len_s - 1, t, len_t) + 1, levenshtein_distance(s, len_s, t, len_t - 1) + 1, levenshtein_distance(s, len_s - 1, t, len_t - 1) + cost)
-     }
+    return len_t;
   }
+
+  if len_t == 0 {
+    return len_s;
+  }
+
+  // test if last characters of the strings match
+  let cost : usize = if s.chars().nth(len_s-1) == t.chars().nth(len_t-1) {
+    0
+  } else {
+    1
+  };
+
+  // return minimum of delete char from s, delete char from t, and delete char from both
+  min3(
+    levenshtein_distance(s, len_s - 1, t, len_t) + 1,
+    levenshtein_distance(s, len_s, t, len_t - 1) + 1,
+    levenshtein_distance(s, len_s - 1, t, len_t - 1) + cost
+  )
 }
 
-fn min3(s:usize, t:usize, u:usize) -> usize{
+fn min3(s:usize, t:usize, u:usize) -> usize {
   if s <= t {
     min(s,u)
   } else{
     min(t,u)
   }
 }
-
 
 // TESTS:
 impl Entry {
@@ -243,8 +244,8 @@ fn test_in_close_proximity(){
   let e1 = Entry::new("Entry 1".to_string(), "Punkt1".to_string(), 48.23153745093964, 8.003816366195679);
   let e2 = Entry::new("Entry 2".to_string(), "Punkt2".to_string(), 48.23167056421013, 8.003558874130248);
 
-  assert_eq!(in_close_proximity(&e1, &e2, 30), true);
-  assert_eq!(in_close_proximity(&e1, &e2, 10), false);
+  assert_eq!(in_close_proximity(&e1, &e2, 30.0), true);
+  assert_eq!(in_close_proximity(&e1, &e2, 10.0), false);
 }
 
 #[test]
