@@ -104,7 +104,7 @@ fn entry_distance_in_meters(e1: &Entry, e2: &Entry) -> f64 {
 fn similar_title(e1: &Entry, e2: &Entry, max_percent_different: f32, max_words_different: u32) -> bool {
   let max_dist : usize = ((min(e1.title.len(),e2.title.len()) as f32 * max_percent_different) + 1.0) as usize;  // +1 is to get the ceil
 
-  hamming_distance_small(&e1.title, &e2.title, max_dist)
+  levenshtein_distance_small(&e1.title, &e2.title, max_dist)
   || words_equal_except_k_words(&e1.title, &e2.title, max_words_different)
 }
 
@@ -168,34 +168,48 @@ fn hamming_distance_small(str1: &str, str2:&str, max_dist:usize) -> bool{
 // one character, change one character)
 // but it proved to be way too slow to be run on the whole dataset
 fn levenshtein_distance_small(s: &str, t:&str, max_dist: usize) -> bool{
-  levenshtein_distance(s, s.len(), t, t.len()) <= max_dist
+  levenshtein_distance(s, t) <= max_dist
 }
 
-// https://en.wikipedia.org/wiki/Levenshtein_distance#Computing_Levenshtein_distance
-fn levenshtein_distance(s: &str, len_s : usize, t: &str, len_t: usize) -> usize {
+// Algorithm from https://en.wikipedia.org/wiki/Levenshtein_distance#Computing_Levenshtein_distance
+pub fn levenshtein_distance(s: &str, t: &str) -> usize {
+  let max_s : usize = s.len() + 1;
+  let max_t : usize = t.len() + 1;
 
-  // base case: empty strings
-  if len_s == 0 {
-    return len_t;
+  // for all i and j, d[i,j] will hold the Levenshtein distance between
+  // the first i characters of s and the first j characters of t
+  // note that d has (m+1)*(n+1) values
+  let mut d: Vec<Vec<usize>> = vec![];
+  for i in 0..max_s{
+    d.push(vec![0;max_t]);
   }
 
-  if len_t == 0 {
-    return len_s;
+  // source (s) prefixes can be transformed into empty string by
+  // dropping all characters
+  for i  in 1..max_s {
+    d[i][0] = i;
   }
 
-  // test if last characters of the strings match
-  let cost : usize = if s.chars().nth(len_s-1) == t.chars().nth(len_t-1) {
-    0
-  } else {
-    1
-  };
+  // target (t) prefixes can be reached from empty source prefix
+  // by inserting every character
+  for j in 1..max_t {
+      d[0][j] = j;
+  }
 
-  // return minimum of delete char from s, delete char from t, and delete char from both
-  min3(
-    levenshtein_distance(s, len_s - 1, t, len_t) + 1,
-    levenshtein_distance(s, len_s, t, len_t - 1) + 1,
-    levenshtein_distance(s, len_s - 1, t, len_t - 1) + cost
-  )
+  for j in 1..max_t {
+      for i in 1..max_s{
+        let substitutionCost = if s.chars().nth(i) == t.chars().nth(j) { 
+          0 
+        } else { 
+          1 
+        };
+        d[i][j] = min3(d[i-1][j] + 1,                   // deletion
+                       d[i][j-1] + 1,                   // insertion
+                       d[i-1][j-1] + substitutionCost)  // substitution
+      }
+  }
+
+  d[max_s-1][max_t-1]
 }
 
 fn min3(s:usize, t:usize, u:usize) -> usize {
@@ -269,19 +283,11 @@ fn test_is_duplicate(){
   let e4 = Entry::new("En Eintrg Blablala".to_string(), "Hallo! Ein Eintrag".to_string(), 47.23153745093955, 5.003816366195679);
   let e5 = Entry::new("Ein Eintrag Blabla".to_string(), "Hallo! Ein Eintrag".to_string(), 40.23153745093960, 5.003816366195670);
 
-
   assert_eq!(Some(DuplicateType::SimilarWords), is_duplicate(&e1, &e2));  // titles have a word that is equal
-  //assert_eq!(Some(DuplicateType::SimilarChars), is_duplicate(&e1, &e4));  // titles similar: small levenshtein distance
+  assert_eq!(Some(DuplicateType::SimilarChars), is_duplicate(&e1, &e4));  // titles similar: small levenshtein distance
   assert_eq!(Some(DuplicateType::SimilarChars), is_duplicate(&e1, &e3));  // titles similar: small hamming distance
   assert_eq!(None, is_duplicate(&e2, &e4));     // titles not similar
   assert_eq!(None, is_duplicate(&e4, &e5));     // entries not located close together
-}
-
-#[test]
-fn test_levenshtein_distance(){
-  assert_eq!(5, levenshtein_distance("hello", 5, "",0));
-  assert_eq!(3, levenshtein_distance("", 0, "abc", 3));
-  assert_eq!(1, levenshtein_distance("hello", 5, "heello", 6));
 }
 
 #[test]
@@ -298,4 +304,11 @@ fn test_words_equal(){
   assert_eq!(true, words_equal_except_k_words("ab abc a", "abc ab", 1));
   assert_eq!(true, words_equal_except_k_words("ab ac a", "abc ab ab", 2));
   assert_eq!(false, words_equal_except_k_words("a a a", "ab abc", 2));
+}
+
+#[test]
+fn test_levenshtein_distance(){
+  assert_eq!(3, levenshtein_distance("012a34c", "0a3c"));   // delete 1,2 and 4
+  assert_eq!(1, levenshtein_distance("12345", "a12345")); // insert a
+  assert_eq!(1, levenshtein_distance("aabaa", "aacaa"));    // replace b by c
 }
