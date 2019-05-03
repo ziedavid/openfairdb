@@ -442,6 +442,8 @@ components:
           type: string
         license:
           type: string
+        owner:
+          type: string
     Category:
       properties:
         id:
